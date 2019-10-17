@@ -7,8 +7,13 @@ import smtplib
 import pandas as pd
 import os
 
+if getattr(sys, 'frozen', False):
+    application_path = sys.executable
+else:
+    application_path = __file__
+
 # Global Variable declaration
-curr_dir = os.path.dirname(os.path.abspath(__file__))
+curr_dir = os.path.dirname(os.path.abspath(application_path))
 main_dir = os.path.dirname(curr_dir)
 global_objs = grabobjs(main_dir, 'Grab_Distro')
 
