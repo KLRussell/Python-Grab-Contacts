@@ -1,5 +1,5 @@
 from Global import grabobjs
-from Settings import SettingsGUI
+from Grab_Distro_Settings import SettingsGUI
 from win32com.client import *
 
 import os
