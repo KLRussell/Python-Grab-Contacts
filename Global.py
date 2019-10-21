@@ -6,12 +6,18 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
+# Need these to be imported when compiling EXE (This is for the Shelve-Lock module I created)
+from shelve_lock import dbm_new
+from shelve_lock import dumb
+from shelve_lock import gnu
+from shelve_lock import ndbm_new
+
 import traceback
 import xml.etree.ElementTree as ET
 import pathlib as pl
 import pandas as pd
 import sqlalchemy as mysql
-import shelve
+import shelve_lock
 import pyodbc
 import os
 import datetime
@@ -28,11 +34,13 @@ def grabobjs(scriptdir, filename=None):
 
         if len(list(pl.Path(scriptdir).glob('Script_Settings.*'))) > 0:
             myobjs['Local_Settings'] = ShelfHandle(os.path.join(scriptdir, 'Script_Settings'))
+            myobjs['Local_Settings'].read_shelf()
             mydir = myobjs['Local_Settings'].grab_item('General_Settings_Path')
 
             if mydir and os.path.exists(mydir):
                 myobjs['Settings'] = ShelfHandle(os.path.join(myobjs['Local_Settings'].grab_item(
                     'General_Settings_Path'), 'General_Settings'))
+                myobjs['Settings'].read_shelf()
             else:
                 while not myinput:
                     print("Please input a directory path where to setup general settings at:")
@@ -51,6 +59,7 @@ def grabobjs(scriptdir, filename=None):
         if myinput:
             myobjs['Local_Settings'] = ShelfHandle(os.path.join(scriptdir, 'Script_Settings'))
             myobjs['Local_Settings'].add_item('General_Settings_Path', myinput)
+            myobjs['Local_Settings'].write_shelf()
             myobjs['Settings'] = ShelfHandle(os.path.join(myinput, 'General_Settings'))
 
         myobjs['Event_Log'] = LogHandle(scriptdir, filename)
@@ -137,119 +146,116 @@ class CryptHandle:
 class ShelfHandle:
     def __init__(self, filepath=None):
         if os.path.exists(os.path.split(filepath)[0]):
-            self.filepath = filepath
-            sfile = shelve.open(filepath)
-            type(sfile)
-            sfile.close()
+            self.file = filepath
+            self.shelf_data = dict()
+            self.rem_keys = list()
+            self.add_keys = list()
         else:
             raise Exception('Invalid filepath has been provided')
 
-    def change_config(self, filepath):
-        if os.path.exists(os.path.split(self.filepath)[0]):
-            self.filepath = filepath
-
     def get_shelf_path(self):
-        return self.filepath
+        return self.file
+
+    def change_config(self, filepath):
+        if os.path.exists(os.path.split(self.file)[0]):
+            self.file = filepath
+
+    def read_shelf(self):
+        self.shelf_data.clear()
+        self.rem_keys.clear()
+        self.add_keys.clear()
+        shelf = shelve_lock.open(self.file)
+
+        if len(shelf) > 0:
+            for k, v in shelf.items():
+                self.shelf_data[k] = v
+
+        shelf.close()
+
+    def write_shelf(self):
+        shelf = shelve_lock.open(self.file)
+
+        if len(self.rem_keys) > 0:
+            for k in self.rem_keys:
+                if k in shelf.keys():
+                    del shelf[k]
+
+        if len(self.add_keys) > 0:
+            for key in self.add_keys:
+                shelf[key] = self.shelf_data[key]
+
+            self.shelf_data.clear()
+
+        if len(shelf) > 0:
+            for k, v in shelf.items():
+                self.shelf_data[k] = v
+
+        self.rem_keys.clear()
+        self.add_keys.clear()
+        shelf.close()
+
+    def empty_shelf(self):
+        shelf = shelve_lock.open(self.file)
+        shelf.clear()
+        shelf.close()
 
     def get_keys(self):
-        mykeys = []
-        sfile = shelve.open(self.filepath)
-        type(sfile)
-
-        for key in sfile.keys():
-            mykeys.append(key)
-
-        sfile.close()
-
-        return mykeys
+        return self.shelf_data.keys()
 
     def grab_item(self, key):
-        sfile = shelve.open(self.filepath)
-        type(sfile)
-
-        if key in sfile.keys():
-            myitem = sfile[key]
-        else:
-            myitem = None
-
-        sfile.close()
-
-        return myitem
+        if key and key in self.shelf_data.keys():
+            return self.shelf_data[key]
 
     def add_item(self, key, val=None, inputmsg=None, encrypt=False):
         if key:
-            sfile = shelve.open(self.filepath)
-            type(sfile)
-
-            if key not in sfile.keys():
-                if encrypt:
-                    myobj = CryptHandle()
+            while not val:
+                if inputmsg:
+                    print(inputmsg)
                 else:
-                    myobj = None
+                    print("Please input value for {}:".format(key))
 
-                if not val:
-                    myinput = None
+                val = input()
 
-                    while not myinput:
-                        if inputmsg:
-                            print(inputmsg)
-                        else:
-                            print("Please input value for {}:".format(key))
-                        myinput = input()
+            if key in self.rem_keys:
+                self.rem_keys.remove(key)
 
-                    if myobj:
-                        myobj.encrypt_text(myinput)
-                        sfile[key] = myobj
-                    else:
-                        sfile[key] = myinput
-                elif myobj:
-                    myobj.encrypt_text(val)
-                    sfile[key] = myobj
-                else:
-                    sfile[key] = val
+            if not key in self.add_keys:
+                self.add_keys.append(key)
 
-            sfile.close()
+            if encrypt:
+                myobj = CryptHandle()
+                myobj.encrypt_text(val)
+                self.shelf_data[key] = myobj
+            else:
+                self.shelf_data[key] = val
 
     def del_item(self, key):
-        if key:
-            sfile = shelve.open(self.filepath)
-            type(sfile)
+        if key and key in self.shelf_data.keys():
+            if key in self.add_keys:
+                self.add_keys.remove(key)
 
-            if key in sfile.keys():
-                del sfile[key]
-
-            sfile.close()
+            self.rem_keys.append(key)
+            del self.shelf_data[key]
 
     def grab_list(self):
-        mydict = dict()
-        sfile = shelve.open(self.filepath)
-        type(sfile)
-
-        for k, v in sfile.items():
-            mydict[k] = v
-
-        sfile.close()
-
-        return mydict
+        return self.shelf_data
 
     def empty_list(self):
-        sfile = shelve.open(self.filepath)
-        type(sfile)
+        if len(self.shelf_data) > 0:
+            for key in self.shelf_data.keys():
+                self.rem_keys.append(key)
 
-        for k in sfile.keys():
-            del sfile[k]
-
-        sfile.close()
+            self.add_keys.clear()
+            self.shelf_data.clear()
 
     def add_list(self, dict_list):
-        if len(dict_list) > 0 and isinstance(dict_list, dict):
-            sfile = shelve.open(self.filepath)
-            type(sfile)
-
+        if isinstance(dict_list, dict) and len(dict_list) > 0:
             for k, v in dict_list.items():
-                sfile[k] = v
+                if k in self.rem_keys:
+                    self.rem_keys.remove(k)
 
-            sfile.close()
+                self.add_keys.append(k)
+                self.shelf_data[k] = v
 
 
 class LogHandle:

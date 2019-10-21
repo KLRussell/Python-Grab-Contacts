@@ -50,6 +50,8 @@ class SettingsGUI:
         if val:
             global_objs[setting_list].add_item(key=key, val=val, encrypt=encrypt)
 
+        global_objs[setting_list].write_shelf()
+
     # Static function to fill textbox in GUI
     @staticmethod
     def fill_textbox(setting_list, val, key):
